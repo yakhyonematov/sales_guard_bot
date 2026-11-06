@@ -1,0 +1,214 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  SUPER_ADMIN
+  STAFF
+  ROP
+  MANAGER
+}
+
+enum TierType {
+  AMOUNT
+  FACT
+}
+
+enum RequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+model User {
+  id                 String                @id @default(uuid())
+  telegramId         BigInt                @unique
+  fullName           String
+  phone              String?
+  role               UserRole
+  isActive           Boolean               @default(true)
+  createdAt          DateTime              @default(now())
+  updatedAt          DateTime              @updatedAt
+
+  ropProfile         Rop?
+  managerProfile     Manager?
+  createdViolations  Violation[]           @relation("CreatedViolations")
+  revokedViolations  Violation[]           @relation("RevokedViolations")
+  createdReports     ReportDefinition[]
+  decidedRequests    RegistrationRequest[]
+  usedInvites        InviteCode[]          @relation("UsedInvites")
+  auditLogs          AuditLog[]
+
+  @@index([role])
+}
+
+model Rop {
+  id                   String                @id @default(uuid())
+  userId               String                @unique
+  user                 User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  isActive             Boolean               @default(true)
+  createdAt            DateTime              @default(now())
+  updatedAt            DateTime              @updatedAt
+
+  managers             Manager[]
+  registrationRequests RegistrationRequest[]
+  inviteCodes          InviteCode[]
+}
+
+model Manager {
+  id         String      @id @default(uuid())
+  fullName   String
+  ropId      String
+  rop        Rop         @relation(fields: [ropId], references: [id])
+  userId     String?     @unique
+  user       User?       @relation(fields: [userId], references: [id], onDelete: SetNull)
+  isActive   Boolean     @default(true)
+  createdAt  DateTime    @default(now())
+  updatedAt  DateTime    @updatedAt
+
+  violations Violation[]
+
+  @@index([ropId])
+  @@index([isActive])
+}
+
+model Scale {
+  id        String      @id @default(uuid())
+  name      String      @unique
+  createdAt DateTime    @default(now())
+  updatedAt DateTime    @updatedAt
+
+  tiers     ScaleTier[]
+  clauses   Clause[]
+}
+
+model ScaleTier {
+  id         String   @id @default(uuid())
+  scaleId    String
+  scale      Scale    @relation(fields: [scaleId], references: [id], onDelete: Cascade)
+  occurrence Int
+  type       TierType
+  amount     Int      @default(0)
+
+  @@unique([scaleId, occurrence])
+  @@index([scaleId])
+}
+
+model Clause {
+  id         String      @id @default(uuid())
+  code       String      @unique
+  text       String      @db.Text
+  scaleId    String
+  scale      Scale       @relation(fields: [scaleId], references: [id])
+  sortKey    Float
+  isActive   Boolean     @default(true)
+  createdAt  DateTime    @default(now())
+  updatedAt  DateTime    @updatedAt
+
+  violations Violation[]
+
+  @@index([isActive])
+  @@index([sortKey])
+}
+
+model Violation {
+  id               String    @id @default(uuid())
+  managerId        String
+  manager          Manager   @relation(fields: [managerId], references: [id])
+  clauseId         String
+  clause           Clause    @relation(fields: [clauseId], references: [id])
+  createdById      String
+  createdBy        User      @relation("CreatedViolations", fields: [createdById], references: [id])
+  comment          String?   @db.Text
+  attachmentFileId String?
+  occurredAt       DateTime  @default(now())
+  monthKey         String
+  occurrenceIndex  Int
+  resultType       TierType
+  resultAmount     Int       @default(0)
+  revokedAt        DateTime?
+  revokedById      String?
+  revokedBy        User?     @relation("RevokedViolations", fields: [revokedById], references: [id])
+  revokeReason     String?   @db.Text
+  idempotencyKey   String    @unique
+
+  @@index([managerId, clauseId, monthKey])
+  @@index([monthKey])
+  @@index([managerId, monthKey])
+  @@index([occurredAt])
+}
+
+model Session {
+  id        String   @id
+  data      String   @db.Text
+  updatedAt DateTime @updatedAt
+}
+
+model ReportDefinition {
+  id          String   @id @default(uuid())
+  name        String
+  groupBy     String
+  metric      String
+  periodType  String
+  createdById String
+  createdBy   User     @relation(fields: [createdById], references: [id])
+  createdAt   DateTime @default(now())
+}
+
+model Setting {
+  id        String   @id @default(uuid())
+  key       String   @unique
+  value     String
+  updatedAt DateTime @updatedAt
+}
+
+model RegistrationRequest {
+  id          String        @id @default(uuid())
+  telegramId  BigInt
+  fullName    String
+  ropId       String
+  rop         Rop           @relation(fields: [ropId], references: [id])
+  status      RequestStatus @default(PENDING)
+  decidedById String?
+  decidedBy   User?         @relation(fields: [decidedById], references: [id])
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  @@index([status])
+  @@index([ropId])
+}
+
+model InviteCode {
+  id        String    @id @default(uuid())
+  code      String    @unique
+  role      UserRole
+  ropId     String?
+  rop       Rop?      @relation(fields: [ropId], references: [id])
+  usedAt    DateTime?
+  usedById  String?
+  usedBy    User?     @relation("UsedInvites", fields: [usedById], references: [id])
+  expiresAt DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([code])
+}
+
+model AuditLog {
+  id        String   @id @default(uuid())
+  actorId   String?
+  actor     User?    @relation(fields: [actorId], references: [id])
+  action    String
+  entity    String
+  entityId  String?
+  payload   Json?
+  createdAt DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([actorId])
+  @@index([entity])
+}

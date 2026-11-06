@@ -1,0 +1,100 @@
+# Telegram Bot — Sales Department Penalty Tracking System (OKK)
+# Vazifalar va Loyiha Holati (Task List & Progress)
+================================================================================
+Umumiy progress: [████████████████████] 100% (11/11 asosiy bosqich)
+
+Holat belgilari:
+[ ] - Bajarilmagan (Kutilmoqda)
+[/] - Jarayonda (Ishlanmoqda)
+[x] - Bajarildi (Tayyor)
+[-] - Bekor qilingan
+
+================================================================================
+BOSQICHMA-BOSQICH REJA (ROADMAP):
+================================================================================
+
+[x] 1. Loyiha arxitekturasi va muhitini sozlash
+    [x] 1.1. NestJS loyihasini yaratish va TypeScript qat'iy rejimini (strict mode) sozlash
+    [x] 1.2. Kerakli kutubxonalarni o'rnatish (@nestjs/config, nestjs-telegraf, telegraf, prisma, exceljs, class-validator, pino/winston, va h.k.)
+    [x] 1.3. Muhit konfiguratsiyasi (.env, .env.example, config validatsiyasi)
+    [x] 1.4. Docker va docker-compose.yml fayllarini tayyorlash (App + PostgreSQL)
+
+[x] 2. Ma'lumotlar bazasi va Prisma modellari (Database Schema & Seed)
+    [x] 2.1. Prisma sxemasini ishlab chiqish (User, Rop, Manager, Scale, ScaleTier, Clause, Violation, ReportDefinition, Setting, RegistrationRequest, InviteCode, AuditLog, Session)
+    [x] 2.2. Indekslar va relationlarni to'g'ri o'rnatish
+    [x] 2.3. Dastlabki ma'lumotlarni kiritish (Seed script):
+            - Shkala A (2.1, 2.7, 2.13, 2.22): 1: 60k, 2: 60k, 3: 100k, 4: 0, 5+: FAKT
+            - Shkala B (3.1, 3.3, 3.5, 3.10, 3.11): 1: 100k, 2: 100k, 3: 0, 4: FAKT, 5+: FAKT
+            - Shkala C (4.2): 1: 0, 2: 0, 3: FAKT, 4: FAKT, 5+: FAKT
+            - Barcha 10 ta band matnlari
+            - Dastlabki sozlamalar (trainingThreshold = 2, va boshqalar)
+            - SUPER_ADMIN foydalanuvchisi
+
+[x] 3. PenaltyEngine — Jarima hisoblash dvigateli va Unit testlar
+    [x] 3.1. Pure hisoblash servisini yaratish (oylik takrorlanish, shkala pog'onalari, 5+ qoidasi, AMOUNT va FACT turlari)
+    [x] 3.2. Asia/Tashkent vaqt mintaqasi bo'yicha oy chegaralarini to'g'ri aniqlash
+    [x] 3.3. Unit testlar yozish (Jest):
+            - Shkala A, B, C ning barcha 5 ta pog'onasi
+            - 5+ va undan keyingi holatlar
+            - Yangi oy boshlanishida hisoblagich 1 ga qaytishi
+            - Bekor qilingan (revoked) holatlarni hisobga olmaslik
+            - Oradagi qoidabuzarlik bekor qilinganda keyingilarining natijasini qayta hisoblash
+
+[x] 4. Sessiyalar, Autentifikatsiya va Ro'yxatdan o'tish (Auth & Registration)
+    [x] 4.1. PostgreSQL asosidagi doimiy sessiya (persistent session store) tizimi
+    [x] 4.2. /start komandasi va ro'yxatdan o'tish tekshiruvi (SUPER_ADMIN env orqali, STAFF/ROP taklif/id orqali)
+    [x] 4.3. Menejerlar o'z-o'zini ro'yxatdan o'tkazishi: ROP tanlash -> band bo'lmagan menejer profilini tanlash -> biriktirish
+    [x] 4.4. Ro'yxatda yo'q menejerlar uchun ariza (RegistrationRequest) va tasdiqlash navbati (Approval queue)
+    [x] 4.5. Telegraf uchun RoleGuard (@Roles decoratori) va server-side callback tekshiruvlari
+
+[x] 5. Asosiy oqim: Qoidabuzarlik / Jarima kiritish (Violation Wizard)
+    [x] 5.1. Menejerni tanlash (sahifalangan inline klaviatura, ROP bo'yicha filtr, qidiruv)
+    [x] 5.2. Qoida bandini tanlash (faqat raqamlar 3-4 tadan qatorga, tabiiy saralash, "ℹ️ Bandlar matni" tugmasi)
+    [x] 5.3. Izoh kiritish bosqichi (ixtiyoriy, "O'tkazib yuborish" tugmasi, rasm ilovasi)
+    [x] 5.4. Tasdiqlash ekrani va hisoblangan natija PREVIEW ko'rsatish
+    [x] 5.5. Idempotent saqlash (tranzaksiya, qator blokirovkasi, double-tap himoyasi)
+
+[x] 6. Qoidabuzarlikni bekor qilish (Revoke) va Qayta tiklash (Restore)
+    [x] 6.1. Bekor qilish (o'chirish) sababi bilan
+    [x] 6.2. Bir tranzaksiyada barcha keyingi qoidabuzarliklarni qayta hisoblash
+    [x] 6.3. O'zgartirishlar bo'yicha ROP va Menejerni xabardor qilish
+
+[x] 7. Xabarnomalar va Obuchenie (Training Alert) tizimi
+    [x] 7.1. Jarima qo'yilganda Menejerga xabar yuborish
+    [x] 7.2. Jarima qo'yilganda ROPga to'liq formatdagi xabar yuborish
+    [x] 7.3. Chegaraviy ko'rsatkichdan oshganda (2-marta yoki FAKT) ROPga maxsus Obuchenie signali
+    [x] 7.4. Telegram xatoliklarini (403 bot blocked va rate limit) xavfsiz boshqarish
+
+[x] 8. Rollar bo'yicha interfeys va menyular (Role Menus)
+    [x] 8.1. Bosh Admin menyusi
+    [x] 8.2. Xodim (Staff) menyusi
+    [x] 8.3. ROP menyusi (faqat o'z jamoasi)
+    [x] 8.4. Menejer menyusi (shaxsiy statistika, jarimalar tarixi, xavf ostidagi bandlar)
+    [x] 8.5. Qulay orqaga va asosiy menyuga qaytish navigatsiyasi
+
+[x] 9. Statistika va Hisobotlar (Statistics & Reports)
+    [x] 9.1. Oy tanlagichi (joriy oy va oldingi oylar)
+    [x] 9.2. Menejer, ROP va Global umumiy statistika hisob-kitoblari
+    [x] 9.3. Matnli chiroyli jadvallar va reytinglar
+    [x] 9.4. Excel (.xlsx) eksport qilish (Summary, By manager, By clause, Violations log)
+
+[x] 10. Boshqaruv (Admin & Staff CRUD) va Sozlamalar
+    [x] 10.1. Menejerlar CRUD (yangi qo'shish, ROPga biriktirish/ko'chirish, nofaol qilish)
+    [x] 10.2. ROPlar va Xodimlar CRUD
+    [x] 10.3. Qoida bandlari va Shkalalar CRUD (shkala o'zgarganda faqat kelajakka yoki joriy oyni qayta hisoblash tanlovi)
+    [x] 10.4. Audit log (kim, qachon, qanday amal bajardi)
+    [x] 10.5. Xabar tarqatish (Broadcast) tizimi
+
+[x] 11. Xatoliklarni boshqarish, Testlash va Ishga tushirish hujjatlari
+    [x] 11.1. Botni qulatmaydigan global xatoliklar filtri (O'zbekcha xushmuomala xabar)
+    [x] 11.2. PenaltyEngine va Violations integratsion/unit testlari
+    [x] 11.3. Loyihani to'liq build qilish va tekshirish
+    [x] 11.4. README.md (O'rnatish, ishga tushirish, arxitektura va edge cases tushuntirishlari)
+
+================================================================================
+ASOSIY TALABLAR VA MA'LUMOTLAR HUJJATI (REFERENCE):
+================================================================================
+# TASK: Telegram bot — Sales Department Penalty Tracking System (OKK)
+
+Build a production-ready Telegram bot that records and calculates penalties ("shtraf") for sales managers, based on a progressive penalty scale. Deliver complete, working code: no placeholders, no TODOs, no truncated logic.
+All user-facing bot texts MUST be in Uzbek (Latin script). Code, comments, identifiers and README in English.
