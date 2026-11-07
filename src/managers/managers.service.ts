@@ -15,11 +15,44 @@ export class ManagersService {
     });
   }
 
+  async findById(id: string) {
+    return this.prisma.manager.findUnique({
+      where: { id },
+      include: {
+        rop: { include: { user: true } },
+        user: true,
+        _count: { select: { violations: true } },
+      },
+    });
+  }
+
+  async assignToRop(managerId: string, ropId: string) {
+    const rop = await this.prisma.rop.findUnique({ where: { id: ropId } });
+    if (!rop) throw new NotFoundException("Bunday ROP topilmadi");
+
+    return this.prisma.manager.update({
+      where: { id: managerId },
+      data: { ropId },
+      include: { rop: { include: { user: true } }, user: true },
+    });
+  }
+
+  async toggleActive(id: string) {
+    const manager = await this.prisma.manager.findUnique({ where: { id } });
+    if (!manager) throw new NotFoundException("Menejer topilmadi");
+
+    return this.prisma.manager.update({
+      where: { id },
+      data: { isActive: !manager.isActive },
+      include: { rop: { include: { user: true } }, user: true },
+    });
+  }
+
   async update(id: string, data: { fullName?: string; ropId?: string; isActive?: boolean }) {
     return this.prisma.manager.update({
       where: { id },
       data,
-      include: { rop: { include: { user: true } } },
+      include: { rop: { include: { user: true } }, user: true },
     });
   }
 

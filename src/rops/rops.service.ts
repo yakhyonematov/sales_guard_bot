@@ -25,31 +25,56 @@ export class RopsService {
       where: { id },
       include: {
         user: true,
-        managers: { where: { isActive: true } },
+        managers: {
+          orderBy: { fullName: 'asc' },
+          include: { user: true },
+        },
+        _count: { select: { managers: true } },
       },
     });
   }
 
-  async createWithUser(fullName: string, telegramId: bigint) {
-    const existing = await this.prisma.user.findUnique({ where: { telegramId } });
-    if (existing) {
-      if (existing.role === UserRole.ROP) {
-        throw new BadRequestException("Ushbu Telegram ID egasi allaqachon ROP");
+  async createRop(fullName: string, telegramId?: bigint) {
+    if (telegramId && telegramId > 0n) {
+      const existing = await this.prisma.user.findUnique({ where: { telegramId } });
+      if (existing) {
+        if (existing.role === UserRole.ROP) {
+          const existingRop = await this.prisma.rop.findUnique({ where: { userId: existing.id } });
+          if (existingRop) {
+            throw new BadRequestException("Ushbu Telegram ID egasi allaqachon ROP");
+          }
+        }
+        // Upgrade user to ROP
+        await this.prisma.user.update({
+          where: { id: existing.id },
+          data: { role: UserRole.ROP, fullName, isActive: true },
+        });
+        return this.prisma.rop.create({
+          data: { userId: existing.id, isActive: true },
+          include: { user: true },
+        });
       }
-      // Upgrade user to ROP
-      await this.prisma.user.update({
-        where: { id: existing.id },
-        data: { role: UserRole.ROP, fullName },
+
+      const user = await this.prisma.user.create({
+        data: {
+          telegramId,
+          fullName,
+          role: UserRole.ROP,
+          isActive: true,
+        },
       });
+
       return this.prisma.rop.create({
-        data: { userId: existing.id, isActive: true },
+        data: { userId: user.id, isActive: true },
         include: { user: true },
       });
     }
 
+    // When Telegram ID is not provided, create with unique negative placeholder
+    const placeholderId = BigInt(-1 * (Date.now() * 1000 + Math.floor(Math.random() * 999)));
     const user = await this.prisma.user.create({
       data: {
-        telegramId,
+        telegramId: placeholderId,
         fullName,
         role: UserRole.ROP,
         isActive: true,
@@ -60,6 +85,10 @@ export class RopsService {
       data: { userId: user.id, isActive: true },
       include: { user: true },
     });
+  }
+
+  async createWithUser(fullName: string, telegramId: bigint) {
+    return this.createRop(fullName, telegramId);
   }
 
   async deleteOrDeactivate(id: string, reassignToRopId?: string) {

@@ -43,6 +43,31 @@ export interface SessionData extends Scenes.WizardSession<Scenes.WizardSessionDa
   managerSearchQuery?: string;
   managerPage?: number;
   historyPage?: number;
+
+  // ROP & Manager Admin Flows
+  ropDraft?: {
+    step?: 'ENTER_NAME' | 'ENTER_TG_ID';
+    fullName?: string;
+    ropId?: string;
+  };
+  managerDraft?: {
+    step?: 'ENTER_NAME' | 'SELECT_ROP';
+    fullName?: string;
+    ropId?: string;
+  };
+  ropAssignDraft?: {
+    ropId: string;
+    ropName?: string;
+    searchQuery?: string;
+    page: number;
+    waitingForSearch?: boolean;
+  };
+  managerListDraft?: {
+    page: number;
+    searchQuery?: string;
+    waitingForSearch?: boolean;
+    ropId?: string;
+  };
 }
 
 export interface BotContext extends Scenes.WizardContext {

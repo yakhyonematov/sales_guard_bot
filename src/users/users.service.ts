@@ -93,13 +93,37 @@ export class UsersService {
         });
       }
 
-      // If ROP role, create Rop profile if not existing
+      // If ROP role, create or link Rop profile
       if (invite.role === UserRole.ROP) {
-        const ropExists = await tx.rop.findUnique({ where: { userId: user.id } });
-        if (!ropExists) {
-          await tx.rop.create({
-            data: { userId: user.id, isActive: true },
+        if (invite.ropId) {
+          const targetRop = await tx.rop.findUnique({
+            where: { id: invite.ropId },
+            include: { user: true },
           });
+          if (targetRop && targetRop.user && targetRop.user.telegramId < 0n) {
+            const oldUserId = targetRop.userId;
+            await tx.rop.update({
+              where: { id: targetRop.id },
+              data: { userId: user.id },
+            });
+            await tx.user.delete({
+              where: { id: oldUserId },
+            });
+          } else {
+            const ropExists = await tx.rop.findUnique({ where: { userId: user.id } });
+            if (!ropExists) {
+              await tx.rop.create({
+                data: { userId: user.id, isActive: true },
+              });
+            }
+          }
+        } else {
+          const ropExists = await tx.rop.findUnique({ where: { userId: user.id } });
+          if (!ropExists) {
+            await tx.rop.create({
+              data: { userId: user.id, isActive: true },
+            });
+          }
         }
       }
 

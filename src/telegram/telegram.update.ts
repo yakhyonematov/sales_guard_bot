@@ -68,7 +68,7 @@ export class TelegramUpdate {
     const roleNames: Record<UserRole, string> = {
       SUPER_ADMIN: 'Bosh administrator',
       STAFF: 'Xodim (Inspektor)',
-      ROP: "Guruh rahbari (ROP)",
+      ROP: 'Guruh rahbari (ROP)',
       MANAGER: 'Menejer',
     };
 
@@ -297,7 +297,6 @@ export class TelegramUpdate {
       return;
     }
 
-    // Group by clause
     const grouped = new Map<string, { clause: any; count: number }>();
     for (const v of activeViolations) {
       const g = grouped.get(v.clause.code) || { clause: v.clause, count: 0 };
@@ -436,7 +435,6 @@ export class TelegramUpdate {
     const thresholdSetting = await this.prisma.setting.findUnique({ where: { key: 'trainingThreshold' } });
     const threshold = thresholdSetting ? parseInt(thresholdSetting.value, 10) : 2;
 
-    // Group by manager + clause
     const map = new Map<string, { managerName: string; clauseCode: string; count: number; hasFact: boolean }>();
     for (const v of violations) {
       const key = `${v.managerId}:${v.clauseId}`;
@@ -492,7 +490,7 @@ export class TelegramUpdate {
 
     let text = `👥 <b>Jamoangiz menejerlari ro'yxati (${managers.length} nafar):</b>\n\n`;
     managers.forEach((m, i) => {
-      const tgStatus = m.user ? '✅ Uланган' : '⏳ Ulangan emas';
+      const tgStatus = m.user ? '✅ Ulangan' : '⏳ Ulangan emas';
       text += `${i + 1}. <b>${m.fullName}</b> — ${tgStatus}\n`;
     });
 
@@ -632,7 +630,7 @@ export class TelegramUpdate {
   }
 
   // ==========================================
-  // ADMIN CRUD & SYSTEM CONTROLS
+  // ADMIN CRUD: CLAUSES & SCALES
   // ==========================================
 
   @Hears('📋 Qoidalar va Shkalalar')
@@ -664,50 +662,679 @@ export class TelegramUpdate {
     });
   }
 
+  // ==========================================
+  // ADMIN CRUD: ROPS MANAGEMENT
+  // ==========================================
+
   @Hears('🏢 ROPlar')
   async onRopsAdminList(@Ctx() ctx: BotContext) {
     if (ctx.dbUser?.role !== UserRole.SUPER_ADMIN && ctx.dbUser?.role !== UserRole.STAFF) return;
 
     const rops = await this.ropsService.list();
-    let text = `🏢 <b>ROPlar ro'yxati (${rops.length} ta):</b>\n\n`;
+    let text = `🏢 <b>Guruh rahbarlari (ROPlar) ro'yxati (${rops.length} ta):</b>\n\n`;
 
+    const buttons: any[] = [];
     rops.forEach((r, idx) => {
       const status = r.isActive ? '✅ Faol' : '❌ Faolsiz';
       text += `${idx + 1}. <b>${r.user.fullName}</b> (${status}) — ${r._count.managers} nafar menejer\n`;
+      buttons.push([
+        Markup.button.callback(`🏢 ${r.user.fullName} (${r._count.managers} nafar)`, `adm:rop_detail:${r.id}`),
+      ]);
     });
 
-    const buttons = [
-      [Markup.button.callback("➕ Yangi ROP qo'shish", 'adm:add_rop')],
-    ];
+    if (rops.length === 0) {
+      text += `<i>Hozircha tizimda birorta ham ROP mavjud emas.</i>\n\n`;
+    }
+
+    buttons.push([Markup.button.callback("➕ Yangi ROP qo'shish", 'adm:add_rop')]);
+    buttons.push([Markup.button.callback("🏠 Asosiy menyu", 'nav:main_menu')]);
 
     await ctx.reply(text, {
       parse_mode: 'HTML',
       ...Markup.inlineKeyboard(buttons),
     });
   }
+
+  @Action('adm:rops_back')
+  async onRopsBackAction(@Ctx() ctx: BotContext) {
+    await ctx.answerCbQuery();
+    return this.onRopsAdminList(ctx);
+  }
+
+  @Action(/^adm:rop_detail:(.+)$/)
+  async onRopDetailAction(@Ctx() ctx: BotContext) {
+    const ropId = (ctx.match as RegExpMatchArray)[1];
+    const rop = await this.ropsService.findById(ropId);
+    if (!rop) {
+      await ctx.answerCbQuery("ROP topilmadi", { show_alert: true });
+      return;
+    }
+
+    const tgInfo = rop.user.telegramId > 0n
+      ? `<code>${rop.user.telegramId}</code>`
+      : '<i>(Ulanmagan - taklif havolasi orqali ulanadi)</i>';
+
+    let text =
+      `🏢 <b>Guruh rahbari (ROP): ${rop.user.fullName}</b>\n\n` +
+      `📱 <b>Telegram ID:</b> ${tgInfo}\n` +
+      `📌 <b>Holat:</b> ${rop.isActive ? '✅ Faol' : '❌ Faolsiz'}\n` +
+      `👥 <b>Menejerlar soni:</b> ${rop.managers.length} nafar\n\n`;
+
+    if (rop.managers.length > 0) {
+      text += `📋 <b>Jamoa a'zolari:</b>\n`;
+      rop.managers.forEach((m, idx) => {
+        const mStatus = m.isActive ? '✅' : '❌';
+        text += `${idx + 1}. ${mStatus} ${m.fullName}\n`;
+      });
+      text += `\n`;
+    } else {
+      text += `<i>Hozircha ushbu ROPga hech qanday menejer biriktirilmagan.</i>\n\n`;
+    }
+
+    text += `<i>Menejerlarni biriktirish yoki ajratish uchun pastdagi tugmani bosing:</i>`;
+
+    const buttons = [
+      [Markup.button.callback("🔗 Menejerlarni biriktirish / boshqarish", `adm:rop_assign:${rop.id}`)],
+      [Markup.button.callback("🔑 Taklif havolasi olish", `adm:rop_invite:${rop.id}`)],
+      [Markup.button.callback(rop.isActive ? "❌ ROPni faolsizlantirish" : "✅ ROPni faollashtirish", `adm:rop_toggle:${rop.id}`)],
+      [Markup.button.callback("◀️ ROPlar ro'yxatiga qaytish", 'adm:rops_back')],
+    ];
+
+    await ctx.answerCbQuery();
+    if (ctx.callbackQuery) {
+      await ctx.editMessageText(text, {
+        parse_mode: 'HTML',
+        ...Markup.inlineKeyboard(buttons),
+      });
+    } else {
+      await ctx.reply(text, {
+        parse_mode: 'HTML',
+        ...Markup.inlineKeyboard(buttons),
+      });
+    }
+  }
+
+  @Action(/^adm:rop_toggle:(.+)$/)
+  async onRopToggleActiveAction(@Ctx() ctx: BotContext) {
+    const ropId = (ctx.match as RegExpMatchArray)[1];
+    const rop = await this.ropsService.findById(ropId);
+    if (!rop) return;
+
+    await this.prisma.rop.update({
+      where: { id: rop.id },
+      data: { isActive: !rop.isActive },
+    });
+
+    await ctx.answerCbQuery("ROP holati o'zgartirildi!");
+    return this.onRopDetailAction(ctx);
+  }
+
+  @Action(/^adm:rop_invite:(.+)$/)
+  async onRopInviteAction(@Ctx() ctx: BotContext) {
+    const ropId = (ctx.match as RegExpMatchArray)[1];
+    const rop = await this.ropsService.findById(ropId);
+    if (!rop) {
+      await ctx.answerCbQuery("ROP topilmadi");
+      return;
+    }
+
+    const invite = await this.usersService.generateInviteCode(UserRole.ROP, rop.id);
+    const botUsername = ctx.botInfo.username;
+
+    await ctx.answerCbQuery();
+    await ctx.reply(
+      `🔑 <b>${rop.user.fullName} uchun taklif havolasi:</b>\n\n` +
+      `Kod: <code>${invite.code}</code>\n` +
+      `Havola: <code>https://t.me/${botUsername}?start=invite_${invite.code}</code>\n\n` +
+      `<i>Ushbu havolani ROPga yuboring. U bosishi bilan profiliga ulanadi.</i>`,
+      {
+        parse_mode: 'HTML',
+        ...Markup.inlineKeyboard([[Markup.button.callback("◀️ Orqaga", `adm:rop_detail:${rop.id}`)]]),
+      },
+    );
+  }
+
+  // ==========================================
+  // ADD ROP FLOW
+  // ==========================================
+
+  @Action('adm:add_rop')
+  async onAddRopStart(@Ctx() ctx: BotContext) {
+    if (ctx.dbUser?.role !== UserRole.SUPER_ADMIN) {
+      await ctx.answerCbQuery("Faqat Super Admin uchun ruxsat etilgan", { show_alert: true });
+      return;
+    }
+
+    ctx.session.ropDraft = { step: 'ENTER_NAME' };
+    await ctx.answerCbQuery();
+    await ctx.reply(
+      "🏢 <b>Yangi ROP (Guruh rahbari) qo'shish</b>\n\n" +
+      "ROPning to'liq ism va familiyasini yozib yuboring:\n" +
+      "(Masalan: <code>Davron Fayziyev</code>)\n\n" +
+      "<i>Bekor qilish uchun /cancel deb yozing.</i>",
+      {
+        parse_mode: 'HTML',
+        ...Markup.inlineKeyboard([[Markup.button.callback("❌ Bekor qilish", 'adm:cancel_draft')]]),
+      },
+    );
+  }
+
+  @Action('adm:rop_create_invite')
+  async onRopCreateInviteAction(@Ctx() ctx: BotContext) {
+    const draft = ctx.session.ropDraft;
+    if (!draft || !draft.fullName) {
+      await ctx.answerCbQuery("Ma'lumot topilmadi. Qaytadan boshlang.");
+      return;
+    }
+
+    const rop = await this.ropsService.createRop(draft.fullName);
+    const invite = await this.usersService.generateInviteCode(UserRole.ROP, rop.id);
+    ctx.session.ropDraft = undefined;
+
+    await ctx.answerCbQuery();
+    const botUsername = ctx.botInfo.username;
+    await ctx.reply(
+      `🎉 <b>Yangi ROP muvaffaqiyatli yaratildi!</b>\n\n` +
+      `🏢 <b>Guruh rahbari:</b> ${rop.user.fullName}\n` +
+      `🔑 <b>Bir martalik taklif kodi:</b> <code>${invite.code}</code>\n` +
+      `🔗 <b>Taklif havolasi:</b>\n<code>https://t.me/${botUsername}?start=invite_${invite.code}</code>\n\n` +
+      `<i>Ushbu havolani yangi ROPga yuboring. U bosishi bilanoq hisobiga ulanadi.\n` +
+      `Endi ushbu ROPga menejerlarni biriktirishingiz mumkin:</i>`,
+      {
+        parse_mode: 'HTML',
+        ...Markup.inlineKeyboard([
+          [Markup.button.callback("🔗 Menejerlarni biriktirish", `adm:rop_assign:${rop.id}`)],
+          [Markup.button.callback("🏢 ROPlar ro'yxatiga qaytish", 'adm:rops_back')],
+        ]),
+      },
+    );
+  }
+
+  // ==========================================
+  // ROP ASSIGN MANAGERS (SEARCH + BUTTONS)
+  // ==========================================
+
+  @Action(/^adm:rop_assign:(.+)$/)
+  async onRopAssignScreenAction(@Ctx() ctx: BotContext) {
+    const ropId = (ctx.match as RegExpMatchArray)[1];
+    ctx.session.ropAssignDraft = {
+      ropId,
+      page: 1,
+      searchQuery: undefined,
+      waitingForSearch: false,
+    };
+    await ctx.answerCbQuery();
+    return this.renderRopAssignUI(ctx);
+  }
+
+  @Action(/^adm:rop_assign_page:(.+):(\d+)$/)
+  async onRopAssignPageChangeAction(@Ctx() ctx: BotContext) {
+    const ropId = (ctx.match as RegExpMatchArray)[1];
+    const page = parseInt((ctx.match as RegExpMatchArray)[2], 10);
+    if (ctx.session.ropAssignDraft) {
+      ctx.session.ropAssignDraft.page = page;
+      ctx.session.ropAssignDraft.ropId = ropId;
+    }
+    await ctx.answerCbQuery();
+    return this.renderRopAssignUI(ctx);
+  }
+
+  @Action(/^adm:rop_assign_search_prompt:(.+)$/)
+  async onRopAssignSearchPromptAction(@Ctx() ctx: BotContext) {
+    const ropId = (ctx.match as RegExpMatchArray)[1];
+    if (ctx.session.ropAssignDraft) {
+      ctx.session.ropAssignDraft.waitingForSearch = true;
+      ctx.session.ropAssignDraft.ropId = ropId;
+    }
+    await ctx.answerCbQuery();
+    await ctx.reply(
+      "🔍 <b>Menejerni qidirish:</b>\n\n" +
+      "Qidirmoqchi bo'lgan menejerning ismini yozib yuboring (masalan: <code>Alisher</code> yoki <code>Vali</code>):\n\n" +
+      "<i>Bekor qilish uchun /cancel deng.</i>",
+      {
+        parse_mode: 'HTML',
+        ...Markup.inlineKeyboard([[Markup.button.callback("◀️ Orqaga", `adm:rop_assign:${ropId}`)]]),
+      },
+    );
+  }
+
+  @Action(/^adm:rop_assign_clear_search:(.+)$/)
+  async onRopAssignClearSearchAction(@Ctx() ctx: BotContext) {
+    const ropId = (ctx.match as RegExpMatchArray)[1];
+    if (ctx.session.ropAssignDraft) {
+      ctx.session.ropAssignDraft.searchQuery = undefined;
+      ctx.session.ropAssignDraft.page = 1;
+      ctx.session.ropAssignDraft.waitingForSearch = false;
+    }
+    await ctx.answerCbQuery("Qidiruv tozalandi");
+    return this.renderRopAssignUI(ctx);
+  }
+
+  @Action(/^adm:rop_set:(.+):(.+)$/)
+  async onRopAssignSetManagerAction(@Ctx() ctx: BotContext) {
+    const ropId = (ctx.match as RegExpMatchArray)[1];
+    const managerId = (ctx.match as RegExpMatchArray)[2];
+
+    try {
+      const manager = await this.managersService.assignToRop(managerId, ropId);
+      await ctx.answerCbQuery(`✅ ${manager.fullName} ushbu guruhga biriktirildi!`);
+    } catch (err: any) {
+      await ctx.answerCbQuery(`Xatolik: ${err.message}`, { show_alert: true });
+    }
+
+    return this.renderRopAssignUI(ctx);
+  }
+
+  @Action(/^adm:rop_unassign:(.+):(.+)$/)
+  async onRopAssignUnassignManagerAction(@Ctx() ctx: BotContext) {
+    const ropId = (ctx.match as RegExpMatchArray)[1];
+    const managerId = (ctx.match as RegExpMatchArray)[2];
+
+    const manager = await this.managersService.findById(managerId);
+    if (!manager) {
+      await ctx.answerCbQuery("Menejer topilmadi");
+      return;
+    }
+
+    const rops = await this.ropsService.list(true);
+    const otherRops = rops.filter((r) => r.id !== ropId);
+
+    if (otherRops.length === 0) {
+      await ctx.answerCbQuery("Bu menejer allaqachon ushbu guruhda.", { show_alert: true });
+      return;
+    }
+
+    const buttons = otherRops.map((r) => [
+      Markup.button.callback(`🏢 ${r.user.fullName} guruhiga o'tkazish`, `adm:rop_reassign:${manager.id}:${r.id}:${ropId}`),
+    ]);
+    buttons.push([Markup.button.callback("◀️ Bekor qilish", `adm:rop_assign:${ropId}`)]);
+
+    await ctx.answerCbQuery();
+    await ctx.reply(
+      `👤 <b>${manager.fullName}</b> hozirda ushbu guruhda.\n\n` +
+      `Uni boshqa ROPga o'tkazishni istaysizmi? Kerakli ROPni tanlang:`,
+      {
+        parse_mode: 'HTML',
+        ...Markup.inlineKeyboard(buttons),
+      },
+    );
+  }
+
+  @Action(/^adm:rop_reassign:(.+):(.+):(.+)$/)
+  async onRopReassignAction(@Ctx() ctx: BotContext) {
+    const managerId = (ctx.match as RegExpMatchArray)[1];
+    const newRopId = (ctx.match as RegExpMatchArray)[2];
+    const currentRopId = (ctx.match as RegExpMatchArray)[3];
+
+    await this.managersService.assignToRop(managerId, newRopId);
+    await ctx.answerCbQuery("Menejer yangi guruhga o'tkazildi!");
+
+    if (ctx.session.ropAssignDraft) {
+      ctx.session.ropAssignDraft.ropId = currentRopId;
+    }
+    return this.renderRopAssignUI(ctx);
+  }
+
+  private async renderRopAssignUI(ctx: BotContext) {
+    const draft = ctx.session.ropAssignDraft;
+    if (!draft || !draft.ropId) return;
+
+    const rop = await this.ropsService.findById(draft.ropId);
+    if (!rop) return;
+
+    const page = draft.page || 1;
+    const search = draft.searchQuery;
+
+    const managersResult = await this.managersService.list({
+      search,
+      page,
+      limit: 6,
+    });
+
+    let text =
+      `🏢 <b>Guruh rahbari:</b> <b>${rop.user.fullName}</b>\n` +
+      `👥 <b>Ushbu guruhdagi menejerlar:</b> <b>${rop.managers.length} nafar</b>\n`;
+
+    if (rop.managers.length > 0) {
+      const names = rop.managers.map((m) => m.fullName).join(', ');
+      text += `📋 <i>Jamoa: ${names}</i>\n`;
+    }
+    text += `\n`;
+
+    if (search) {
+      text += `🔍 <b>Qidiruv natijasi:</b> "<code>${search}</code>" (Jami: ${managersResult.total} ta topildi)\n\n`;
+    } else {
+      text += `🔘 <b>Menejerlarni belgilash:</b>\n`;
+      text += `Quyidagi tugmalar orqali menejerni ushbu guruhga biriktiring:\n`;
+      text += `• ✅ — Ushbu ROPga biriktirilgan\n`;
+      text += `• ➕ — Boshqa guruhda yoki biriktirilmagan (bossa shu guruhga o'tadi)\n\n`;
+      text += `💬 <i>Menejerni qidirish uchun ismini chatga yozib yuborishingiz mumkin!</i>\n\n`;
+    }
+
+    const buttons: any[] = [];
+
+    // Manager selection buttons
+    managersResult.items.forEach((m) => {
+      const isAssigned = m.ropId === rop.id;
+      if (isAssigned) {
+        buttons.push([
+          Markup.button.callback(`✅ ${m.fullName}`, `adm:rop_unassign:${rop.id}:${m.id}`),
+        ]);
+      } else {
+        const otherRopName = m.rop?.user?.fullName ? ` (${m.rop.user.fullName.split(' ')[0]})` : '';
+        buttons.push([
+          Markup.button.callback(`➕ ${m.fullName}${otherRopName}`, `adm:rop_set:${rop.id}:${m.id}`),
+        ]);
+      }
+    });
+
+    if (managersResult.items.length === 0) {
+      text += `<i>Hech qanday menejer topilmadi.</i>\n\n`;
+    }
+
+    // Pagination row
+    const navRow: any[] = [];
+    if (page > 1) {
+      navRow.push(Markup.button.callback('⬅️ Oldingi', `adm:rop_assign_page:${rop.id}:${page - 1}`));
+    }
+    navRow.push(Markup.button.callback(`${page} / ${managersResult.totalPages}`, 'noop'));
+    if (page < managersResult.totalPages) {
+      navRow.push(Markup.button.callback('Keyingi ➡️', `adm:rop_assign_page:${rop.id}:${page + 1}`));
+    }
+    if (navRow.length > 1) {
+      buttons.push(navRow);
+    }
+
+    // Search and Done controls
+    const actionRow: any[] = [];
+    if (search) {
+      actionRow.push(Markup.button.callback('❌ Qidiruvni tozalash', `adm:rop_assign_clear_search:${rop.id}`));
+    } else {
+      actionRow.push(Markup.button.callback('🔍 Ism bo\'yicha qidirish', `adm:rop_assign_search_prompt:${rop.id}`));
+    }
+    actionRow.push(Markup.button.callback('💾 Tayyor / Saqlash', `adm:rop_detail:${rop.id}`));
+    buttons.push(actionRow);
+
+    if (ctx.callbackQuery) {
+      await ctx.editMessageText(text, {
+        parse_mode: 'HTML',
+        ...Markup.inlineKeyboard(buttons),
+      });
+    } else {
+      await ctx.reply(text, {
+        parse_mode: 'HTML',
+        ...Markup.inlineKeyboard(buttons),
+      });
+    }
+  }
+
+  // ==========================================
+  // ADMIN CRUD: MANAGERS MANAGEMENT
+  // ==========================================
 
   @Hears('👥 Menejerlar')
   async onManagersAdminList(@Ctx() ctx: BotContext) {
     if (ctx.dbUser?.role !== UserRole.SUPER_ADMIN && ctx.dbUser?.role !== UserRole.STAFF) return;
 
-    const result = await this.managersService.list({ limit: 10 });
+    ctx.session.managerListDraft = { page: 1, searchQuery: undefined };
+    return this.renderManagersAdminList(ctx);
+  }
+
+  @Action('adm:managers_back')
+  async onManagersBackAction(@Ctx() ctx: BotContext) {
+    await ctx.answerCbQuery();
+    return this.renderManagersAdminList(ctx);
+  }
+
+  @Action(/^adm:mgr_list_page:(\d+)$/)
+  async onManagerListPageChangeAction(@Ctx() ctx: BotContext) {
+    const page = parseInt((ctx.match as RegExpMatchArray)[1], 10);
+    if (!ctx.session.managerListDraft) {
+      ctx.session.managerListDraft = { page: 1 };
+    }
+    ctx.session.managerListDraft.page = page;
+    await ctx.answerCbQuery();
+    return this.renderManagersAdminList(ctx);
+  }
+
+  @Action('adm:mgr_search_prompt')
+  async onManagerSearchPromptAction(@Ctx() ctx: BotContext) {
+    if (!ctx.session.managerListDraft) {
+      ctx.session.managerListDraft = { page: 1 };
+    }
+    ctx.session.managerListDraft.waitingForSearch = true;
+    await ctx.answerCbQuery();
+    await ctx.reply(
+      "🔍 <b>Menejerni qidirish:</b>\n\n" +
+      "Qidirmoqchi bo'lgan menejerning ismini yozib yuboring (masalan: <code>Alisher</code> yoki <code>Karimov</code>):\n\n" +
+      "<i>Bekor qilish uchun /cancel deb yozing.</i>",
+      {
+        parse_mode: 'HTML',
+        ...Markup.inlineKeyboard([[Markup.button.callback("◀️ Orqaga", 'adm:managers_back')]]),
+      },
+    );
+  }
+
+  @Action('adm:mgr_clear_search')
+  async onManagerClearSearchAction(@Ctx() ctx: BotContext) {
+    if (ctx.session.managerListDraft) {
+      ctx.session.managerListDraft.searchQuery = undefined;
+      ctx.session.managerListDraft.page = 1;
+      ctx.session.managerListDraft.waitingForSearch = false;
+    }
+    await ctx.answerCbQuery("Qidiruv tozalandi");
+    return this.renderManagersAdminList(ctx);
+  }
+
+  private async renderManagersAdminList(ctx: BotContext) {
+    const draft = ctx.session.managerListDraft || { page: 1 };
+    const page = draft.page || 1;
+    const search = draft.searchQuery;
+
+    const result = await this.managersService.list({
+      search,
+      page,
+      limit: 8,
+    });
+
     let text = `👥 <b>Menejerlar ro'yxati (Jami: ${result.total} ta):</b>\n\n`;
+
+    if (search) {
+      text += `🔍 <i>Qidiruv natijasi: "${search}"</i>\n\n`;
+    }
+
+    const buttons: any[] = [];
 
     result.items.forEach((m, idx) => {
       const status = m.isActive ? '✅' : '❌';
-      const tg = m.user ? '📱 Uланган' : '⏳ Kutilmoqda';
-      text += `${idx + 1}. ${status} <b>${m.fullName}</b> (${m.rop.user.fullName}) — ${tg}\n`;
+      const tg = m.user ? '📱' : '⏳';
+      const globalIdx = (page - 1) * 8 + idx + 1;
+      text += `${globalIdx}. ${status} <b>${m.fullName}</b> (🏢 ${m.rop.user.fullName}) — ${tg}\n`;
+
+      buttons.push([
+        Markup.button.callback(`👤 ${m.fullName} (${m.rop.user.fullName.split(' ')[0]})`, `adm:mgr_detail:${m.id}`),
+      ]);
     });
 
+    if (result.items.length === 0) {
+      text += `<i>Hech qanday menejer topilmadi.</i>\n\n`;
+    }
+
+    // Pagination row
+    const navRow: any[] = [];
+    if (page > 1) {
+      navRow.push(Markup.button.callback('⬅️ Oldingi', `adm:mgr_list_page:${page - 1}`));
+    }
+    navRow.push(Markup.button.callback(`${page} / ${result.totalPages}`, 'noop'));
+    if (page < result.totalPages) {
+      navRow.push(Markup.button.callback('Keyingi ➡️', `adm:mgr_list_page:${page + 1}`));
+    }
+    if (navRow.length > 1) {
+      buttons.push(navRow);
+    }
+
+    // Controls
+    const actionRow: any[] = [];
+    if (search) {
+      actionRow.push(Markup.button.callback('❌ Qidiruvni tozalash', 'adm:mgr_clear_search'));
+    } else {
+      actionRow.push(Markup.button.callback('🔍 Qidirish', 'adm:mgr_search_prompt'));
+    }
+    actionRow.push(Markup.button.callback("➕ Menejer qo'shish", 'adm:add_manager'));
+    buttons.push(actionRow);
+
+    buttons.push([Markup.button.callback('🏠 Asosiy menyu', 'nav:main_menu')]);
+
+    if (ctx.callbackQuery) {
+      await ctx.editMessageText(text, {
+        parse_mode: 'HTML',
+        ...Markup.inlineKeyboard(buttons),
+      });
+    } else {
+      await ctx.reply(text, {
+        parse_mode: 'HTML',
+        ...Markup.inlineKeyboard(buttons),
+      });
+    }
+  }
+
+  @Action(/^adm:mgr_detail:(.+)$/)
+  async onManagerDetailAction(@Ctx() ctx: BotContext) {
+    const managerId = (ctx.match as RegExpMatchArray)[1];
+    const m = await this.managersService.findById(managerId);
+    if (!m) {
+      await ctx.answerCbQuery("Menejer topilmadi");
+      return;
+    }
+
+    const tgStatus = m.user
+      ? `✅ Ulangan (TG ID: <code>${m.user.telegramId}</code>)`
+      : `⏳ Ulanmagan`;
+
+    const text =
+      `👤 <b>Menejer: ${m.fullName}</b>\n\n` +
+      `🏢 <b>Guruh rahbari (ROP):</b> ${m.rop.user.fullName}\n` +
+      `📌 <b>Holat:</b> ${m.isActive ? '✅ Faol' : '❌ Nofaol'}\n` +
+      `📱 <b>Telegram:</b> ${tgStatus}\n` +
+      `⚠️ <b>Jami jarimalari:</b> ${m._count.violations} ta\n\n` +
+      `<i>Kerakli amalni tanlang:</i>`;
+
     const buttons = [
-      [Markup.button.callback("➕ Yangi menejer qo'shish", 'adm:add_manager')],
+      [Markup.button.callback("🏢 Boshqa ROPga ko'chirish", `adm:mgr_change_rop:${m.id}`)],
+      [Markup.button.callback(m.isActive ? "❌ Nofaol qilish" : "✅ Faollashtirish", `adm:mgr_toggle_active:${m.id}`)],
+      [Markup.button.callback("◀️ Menejerlar ro'yxatiga qaytish", 'adm:managers_back')],
     ];
 
-    await ctx.reply(text, {
+    await ctx.answerCbQuery();
+    await ctx.editMessageText(text, {
       parse_mode: 'HTML',
       ...Markup.inlineKeyboard(buttons),
     });
   }
+
+  @Action(/^adm:mgr_change_rop:(.+)$/)
+  async onManagerChangeRopPromptAction(@Ctx() ctx: BotContext) {
+    const managerId = (ctx.match as RegExpMatchArray)[1];
+    const manager = await this.managersService.findById(managerId);
+    if (!manager) return;
+
+    const rops = await this.ropsService.list(true);
+    const buttons = rops.map((r) => [
+      Markup.button.callback(`🏢 ${r.user.fullName} (${r._count.managers} nafar)`, `adm:mgr_do_change_rop:${manager.id}:${r.id}`),
+    ]);
+    buttons.push([Markup.button.callback("◀️ Bekor qilish", `adm:mgr_detail:${manager.id}`)]);
+
+    await ctx.answerCbQuery();
+    await ctx.reply(
+      `👤 <b>${manager.fullName}</b> menejerini qaysi ROPga o'tkazmoqchisiz?\n` +
+      `Hozirgi ROP: <b>${manager.rop.user.fullName}</b>`,
+      {
+        parse_mode: 'HTML',
+        ...Markup.inlineKeyboard(buttons),
+      },
+    );
+  }
+
+  @Action(/^adm:mgr_do_change_rop:(.+):(.+)$/)
+  async onManagerDoChangeRopAction(@Ctx() ctx: BotContext) {
+    const managerId = (ctx.match as RegExpMatchArray)[1];
+    const ropId = (ctx.match as RegExpMatchArray)[2];
+
+    await this.managersService.assignToRop(managerId, ropId);
+    await ctx.answerCbQuery("ROP muvaffaqiyatli o'zgartirildi!");
+    return this.onManagerDetailAction(ctx);
+  }
+
+  @Action(/^adm:mgr_toggle_active:(.+)$/)
+  async onManagerToggleActiveAction(@Ctx() ctx: BotContext) {
+    const managerId = (ctx.match as RegExpMatchArray)[1];
+    await this.managersService.toggleActive(managerId);
+    await ctx.answerCbQuery("Menejer holati yangilandi");
+    return this.onManagerDetailAction(ctx);
+  }
+
+  // ==========================================
+  // ADD MANAGER FLOW
+  // ==========================================
+
+  @Action('adm:add_manager')
+  async onAddManagerStart(@Ctx() ctx: BotContext) {
+    if (ctx.dbUser?.role !== UserRole.SUPER_ADMIN && ctx.dbUser?.role !== UserRole.STAFF) {
+      await ctx.answerCbQuery("Ruxsat berilmagan", { show_alert: true });
+      return;
+    }
+
+    ctx.session.managerDraft = { step: 'ENTER_NAME' };
+    await ctx.answerCbQuery();
+    await ctx.reply(
+      "👤 <b>Yangi menejer qo'shish:</b>\n\n" +
+      "Menejerning to'liq ism va familiyasini yozib yuboring:\n" +
+      "(Masalan: <code>Alisher Vohidov</code>)\n\n" +
+      "<i>Bekor qilish uchun /cancel deb yozing.</i>",
+      {
+        parse_mode: 'HTML',
+        ...Markup.inlineKeyboard([[Markup.button.callback("❌ Bekor qilish", 'adm:cancel_draft')]]),
+      },
+    );
+  }
+
+  @Action(/^adm:mgr_set_rop:(.+)$/)
+  async onManagerSetRopAction(@Ctx() ctx: BotContext) {
+    const ropId = (ctx.match as RegExpMatchArray)[1];
+    const draft = ctx.session.managerDraft;
+
+    if (!draft || !draft.fullName) {
+      await ctx.answerCbQuery("Ma'lumot topilmadi. Qaytadan boshlang.");
+      return;
+    }
+
+    try {
+      const manager = await this.managersService.create(draft.fullName, ropId);
+      ctx.session.managerDraft = undefined;
+
+      await ctx.answerCbQuery();
+      await ctx.reply(
+        `✅ <b>Menejer muvaffaqiyatli qo'shildi!</b>\n\n` +
+        `👤 <b>Menejer:</b> ${manager.fullName}\n` +
+        `🏢 <b>Guruh rahbari (ROP):</b> ${manager.rop.user.fullName}\n` +
+        `📱 <b>Telegram holati:</b> Ulanmagan\n\n` +
+        `<i>Menejer botga kirganda '👤 Menejer sifatida ro'yxatdan o'tish' tugmasini bosib, o'z profilini tanlab ulanishi mumkin.</i>`,
+        {
+          parse_mode: 'HTML',
+          ...Markup.inlineKeyboard([
+            [Markup.button.callback("➕ Yana menejer qo'shish", 'adm:add_manager')],
+            [Markup.button.callback("👥 Menejerlar ro'yxatiga qaytish", 'adm:managers_back')],
+          ]),
+        },
+      );
+    } catch (err: any) {
+      await ctx.answerCbQuery(`Xatolik: ${err.message}`, { show_alert: true });
+    }
+  }
+
+  // ==========================================
+  // STAFF ADMIN & AUDIT & SETTINGS
+  // ==========================================
 
   @Hears('👔 Xodimlar (Staff)')
   async onStaffAdminList(@Ctx() ctx: BotContext) {
@@ -913,18 +1540,157 @@ export class TelegramUpdate {
     return this.onSettingsView(ctx);
   }
 
+  @Action('adm:cancel_draft')
+  async onCancelDraftAction(@Ctx() ctx: BotContext) {
+    ctx.session.ropDraft = undefined;
+    ctx.session.managerDraft = undefined;
+    ctx.session.ropAssignDraft = undefined;
+    ctx.session.managerListDraft = undefined;
+    await ctx.answerCbQuery("Bekor qilindi");
+    await ctx.reply("❌ Amal bekor qilindi.", getMainMenuKeyboard(ctx.dbUser?.role));
+  }
+
   @Action('nav:main_menu')
   async onNavMainMenu(@Ctx() ctx: BotContext) {
+    ctx.session.ropDraft = undefined;
+    ctx.session.managerDraft = undefined;
+    ctx.session.ropAssignDraft = undefined;
+    ctx.session.managerListDraft = undefined;
     await ctx.answerCbQuery();
     await ctx.reply("🏠 Asosiy menyu:", getMainMenuKeyboard(ctx.dbUser?.role));
   }
 
+  // ==========================================
+  // TEXT MESSAGE HANDLER
+  // ==========================================
+
   @On('text')
   async onGlobalText(@Ctx() ctx: BotContext) {
     const text = (ctx.message as any)?.text?.trim();
-    if (!text || text.startsWith('/')) return;
+    if (!text) return;
 
-    // 1. Pending registration draft name
+    if (text === '/cancel') {
+      ctx.session.registrationDraft = undefined;
+      ctx.session.ropDraft = undefined;
+      ctx.session.managerDraft = undefined;
+      ctx.session.ropAssignDraft = undefined;
+      ctx.session.managerListDraft = undefined;
+      ctx.session.violationDraft = undefined;
+      await ctx.reply("❌ Amal bekor qilindi.", getMainMenuKeyboard(ctx.dbUser?.role));
+      return;
+    }
+
+    if (text.startsWith('/')) return;
+
+    // 1. ROP Draft Flow
+    if (ctx.session.ropDraft?.step === 'ENTER_NAME') {
+      const fullName = text.trim();
+      ctx.session.ropDraft = { step: 'ENTER_TG_ID', fullName };
+
+      await ctx.reply(
+        `🏢 ROP: <b>${fullName}</b>\n\n` +
+        `Ushbu ROPning Telegram ID raqamini kiriting (masalan: <code>123456789</code>) yoki taklif havolasi yaratish uchun pastdagi tugmani bosing:`,
+        {
+          parse_mode: 'HTML',
+          ...Markup.inlineKeyboard([
+            [Markup.button.callback("🔗 Taklif havolasi orqali ulash", 'adm:rop_create_invite')],
+            [Markup.button.callback("❌ Bekor qilish", 'adm:cancel_draft')],
+          ]),
+        },
+      );
+      return;
+    }
+
+    if (ctx.session.ropDraft?.step === 'ENTER_TG_ID') {
+      const fullName = ctx.session.ropDraft.fullName!;
+      const tgId = text.trim();
+
+      if (!/^\d+$/.test(tgId)) {
+        await ctx.reply(
+          "⚠️ Telegram ID faqat musbat raqamlardan iborat bo'lishi kerak.\n" +
+          "Iltimos, to'g'ri Telegram ID kiriting yoki 'Taklif havolasi orqali ulash' tugmasini bosing:",
+          {
+            ...Markup.inlineKeyboard([
+              [Markup.button.callback("🔗 Taklif havolasi orqali ulash", 'adm:rop_create_invite')],
+              [Markup.button.callback("❌ Bekor qilish", 'adm:cancel_draft')],
+            ]),
+          },
+        );
+        return;
+      }
+
+      try {
+        const rop = await this.ropsService.createRop(fullName, BigInt(tgId));
+        ctx.session.ropDraft = undefined;
+
+        await ctx.reply(
+          `🎉 <b>Yangi ROP muvaffaqiyatli yaratildi!</b>\n\n` +
+          `🏢 <b>Guruh rahbari:</b> ${rop.user.fullName}\n` +
+          `📱 <b>Telegram ID:</b> <code>${tgId}</code>\n\n` +
+          `Endi ushbu ROPga jamoa menejerlarini biriktirishingiz mumkin:`,
+          {
+            parse_mode: 'HTML',
+            ...Markup.inlineKeyboard([
+              [Markup.button.callback("🔗 Menejerlarni biriktirish", `adm:rop_assign:${rop.id}`)],
+              [Markup.button.callback("🏢 ROPlar ro'yxatiga qaytish", 'adm:rops_back')],
+            ]),
+          },
+        );
+      } catch (err: any) {
+        await ctx.reply(`❌ Xatolik: ${err.message}`);
+      }
+      return;
+    }
+
+    // 2. Manager Draft Flow
+    if (ctx.session.managerDraft?.step === 'ENTER_NAME') {
+      const fullName = text.trim();
+      ctx.session.managerDraft = { step: 'SELECT_ROP', fullName };
+
+      const rops = await this.ropsService.list(true);
+      if (rops.length === 0) {
+        await ctx.reply(
+          "⚠️ Tizimda hali birorta ham faol ROP mavjud emas. Avval ROP qo'shing.",
+          getMainMenuKeyboard(ctx.dbUser?.role),
+        );
+        ctx.session.managerDraft = undefined;
+        return;
+      }
+
+      const buttons = rops.map((r) => [
+        Markup.button.callback(`🏢 ${r.user.fullName} (${r._count.managers} nafar)`, `adm:mgr_set_rop:${r.id}`),
+      ]);
+      buttons.push([Markup.button.callback("❌ Bekor qilish", 'adm:cancel_draft')]);
+
+      await ctx.reply(
+        `👤 Yangi menejer: <b>${fullName}</b>\n\n` +
+        `🏢 <b>Ushbu menejerni qaysi ROP (guruh rahbari)ga biriktirasiz?</b>\n` +
+        `Kerakli ROPni tanlang:`,
+        {
+          parse_mode: 'HTML',
+          ...Markup.inlineKeyboard(buttons),
+        },
+      );
+      return;
+    }
+
+    // 3. ROP Assign Manager Search input
+    if (ctx.session.ropAssignDraft?.ropId) {
+      ctx.session.ropAssignDraft.searchQuery = text.trim();
+      ctx.session.ropAssignDraft.page = 1;
+      ctx.session.ropAssignDraft.waitingForSearch = false;
+      return this.renderRopAssignUI(ctx);
+    }
+
+    // 4. Manager List Admin Search input
+    if (ctx.session.managerListDraft?.waitingForSearch) {
+      ctx.session.managerListDraft.searchQuery = text.trim();
+      ctx.session.managerListDraft.page = 1;
+      ctx.session.managerListDraft.waitingForSearch = false;
+      return this.renderManagersAdminList(ctx);
+    }
+
+    // 5. Pending registration draft name
     if (ctx.session.registrationDraft?.step === 'ENTER_NAME') {
       const ropId = ctx.session.registrationDraft.ropId;
       ctx.session.registrationDraft = undefined;
@@ -962,7 +1728,7 @@ export class TelegramUpdate {
       }
     }
 
-    // 2. Pending Revoke reason
+    // 6. Pending Revoke reason
     if (ctx.session.violationDraft?.comment?.startsWith('REVOKE_PROMPT:')) {
       const violationId = ctx.session.violationDraft.comment.replace('REVOKE_PROMPT:', '');
       ctx.session.violationDraft = undefined;
